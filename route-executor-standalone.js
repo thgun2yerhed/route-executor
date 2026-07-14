@@ -6,8 +6,8 @@ const ALCHEMY_KEY = 'wf-n8242VyUxgSwmWNs9h';
 const POLYGON_RPC = `https://polygon-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`;
 const RELAYER_KEY = process.env.RELAYER_PRIVATE_KEY;
 
-const SUPABASE_URL = 'https://0ec90b57d6e95fcbda19832f.supabase.co';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IjBlYzkwYjU3ZDZlOTVmY2JkYTE5ODMyZiIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzE4NTY3MjAwLCJleHAiOjE3MzQxMTkyMDB9.fake';
+// Your detection engine's endpoint
+const DETECTION_ENGINE = process.env.DETECTION_ENGINE_URL || 'https://it-4zsx.bolt.host';
 
 const TREASURY = '0xCD339078D159404D29000A6716D962C8833ABfe8';
 const ROUTER = '0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff';
@@ -17,39 +17,17 @@ const ERC20_ABI = ['function approve(address spender, uint256 amount) external r
 
 async function getPendingOptimizations() {
   try {
-    const url = `${SUPABASE_URL}/rest/v1/transactions?status=eq.pending&order=gas_saved.desc`;
-    const response = await fetch(url, {
-      headers: {
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-        'Content-Type': 'application/json',
-      },
-    });
-    if (!response.ok) return [];
+    console.log(`📡 Querying detection engine: ${DETECTION_ENGINE}/route-optimizer/status`);
+    const response = await fetch(`${DETECTION_ENGINE}/route-optimizer/status`);
+    if (!response.ok) {
+      console.error(`HTTP ${response.status}`);
+      return [];
+    }
     const data = await response.json();
-    return Array.isArray(data) ? data : [];
+    return data.pending || [];
   } catch (err) {
     console.error('Fetch error:', err.message);
     return [];
-  }
-}
-
-async function updateOptimizationStatus(selector, status, txHash = null) {
-  try {
-    const body = { status, updated_at: new Date().toISOString() };
-    if (txHash) body.tx_hash = txHash;
-    const url = `${SUPABASE_URL}/rest/v1/transactions?selector=eq.${selector}`;
-    await fetch(url, {
-      method: 'PATCH',
-      headers: {
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-  } catch (err) {
-    console.error('Update error:', err.message);
   }
 }
 
@@ -63,7 +41,7 @@ async function execute() {
   console.log(`⏰ ${new Date().toISOString()}`);
 
   try {
-    console.log('📡 Fetching pending optimizations...');
+    console.log('📡 Fetching pending optimizations from detection engine...');
     const pending = await getPendingOptimizations();
 
     if (pending.length === 0) {
@@ -108,12 +86,10 @@ async function execute() {
         await feeTx.wait();
         console.log(`  ✅ Fee: ${feeTx.hash}\n`);
 
-        await updateOptimizationStatus(selector, 'executed', swapReceipt.hash);
         executed++;
       } catch (err) {
         console.error(`  ❌ Failed: ${err.message}\n`);
         failed++;
-        if (opt.selector) await updateOptimizationStatus(opt.selector, 'failed');
       }
     }
 
