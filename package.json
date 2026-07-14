@@ -2,8 +2,11 @@
   "name": "route-executor",
   "version": "1.0.0",
   "type": "module",
+  "scripts": {
+    "start": "node route-executor-standalone.js"
+  },
   "dependencies": {
-    "@supabase/supabase-js": "^2.110.4",
-    "ethers": "^6.7.1"
+    "ethers": "^6.7.1",
+    "express": "^4.18.2"
   }
 }
