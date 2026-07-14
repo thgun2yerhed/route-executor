@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 
+import express from 'express';
 import { ethers } from 'ethers';
 
+const app = express();
 const ALCHEMY_KEY = 'wf-n8242VyUxgSwmWNs9h';
 const POLYGON_RPC = `https://polygon-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`;
 const RELAYER_KEY = process.env.RELAYER_PRIVATE_KEY;
-
-// Your detection engine's endpoint
 const DETECTION_ENGINE = process.env.DETECTION_ENGINE_URL || 'https://it-4zsx.bolt.host';
-
 const TREASURY = '0xCD339078D159404D29000A6716D962C8833ABfe8';
 const ROUTER = '0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff';
 
@@ -17,12 +16,8 @@ const ERC20_ABI = ['function approve(address spender, uint256 amount) external r
 
 async function getPendingOptimizations() {
   try {
-    console.log(`📡 Querying detection engine: ${DETECTION_ENGINE}/route-optimizer/status`);
     const response = await fetch(`${DETECTION_ENGINE}/route-optimizer/status`);
-    if (!response.ok) {
-      console.error(`HTTP ${response.status}`);
-      return [];
-    }
+    if (!response.ok) return [];
     const data = await response.json();
     return data.pending || [];
   } catch (err) {
@@ -31,25 +26,20 @@ async function getPendingOptimizations() {
   }
 }
 
-async function execute() {
+async function executeOptimizations() {
   if (!RELAYER_KEY) {
-    console.error('ERROR: RELAYER_PRIVATE_KEY not set');
-    process.exit(1);
+    return { error: 'RELAYER_PRIVATE_KEY not set' };
   }
 
-  console.log('🚀 RouteOptimization Executor Started');
-  console.log(`⏰ ${new Date().toISOString()}`);
-
   try {
-    console.log('📡 Fetching pending optimizations from detection engine...');
+    console.log('🚀 Executor started at', new Date().toISOString());
     const pending = await getPendingOptimizations();
 
     if (pending.length === 0) {
-      console.log('✅ No pending optimizations');
-      return;
+      return { message: 'No pending optimizations' };
     }
 
-    console.log(`📊 Found ${pending.length} pending optimizations\n`);
+    console.log(`📊 Found ${pending.length} pending optimizations`);
 
     const provider = new ethers.JsonRpcProvider(POLYGON_RPC);
     const relayer = new ethers.Wallet(RELAYER_KEY, provider);
@@ -64,12 +54,7 @@ async function execute() {
         const fee = (gasSavedWei * BigInt(3)) / BigInt(1000);
         const profit = gasSavedWei - fee;
 
-        console.log(`✓ [${selector}] Gas: ${gas_saved} MATIC | Profit: ${ethers.formatUnits(profit, 18)} MATIC`);
-
-        if (profit < ethers.parseUnits('0.001', 18)) {
-          console.log(`  ⚠️ Skipped\n`);
-          continue;
-        }
+        if (profit < ethers.parseUnits('0.001', 18)) continue;
 
         if (token_in && token_in !== '0x0000000000000000000000000000000000000000') {
           const erc20 = new ethers.Contract(token_in, ERC20_ABI, relayer);
@@ -80,24 +65,34 @@ async function execute() {
         const deadline = Math.floor(Date.now() / 1000) + 300;
         const swapTx = await router.swapExactTokensForTokens(amountInWei, 0, optimized_path, relayer.address, deadline);
         const swapReceipt = await swapTx.wait();
-        console.log(`  ✅ Swap: ${swapReceipt.hash}`);
 
         const feeTx = await relayer.sendTransaction({ to: TREASURY, value: fee, gasLimit: 21000 });
         await feeTx.wait();
-        console.log(`  ✅ Fee: ${feeTx.hash}\n`);
 
+        console.log(`✅ Executed ${selector}: ${swapReceipt.hash}`);
         executed++;
       } catch (err) {
-        console.error(`  ❌ Failed: ${err.message}\n`);
+        console.error(`❌ Failed: ${err.message}`);
         failed++;
       }
     }
 
-    console.log(`✨ Complete | Executed: ${executed} | Failed: ${failed}`);
+    return { executed, failed, total: pending.length };
   } catch (err) {
-    console.error('FATAL ERROR:', err.message);
-    process.exit(1);
+    return { error: err.message };
   }
 }
 
-execute();
+app.get('/execute', async (req, res) => {
+  const result = await executeOptimizations();
+  res.json(result);
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Executor running on port ${PORT}`);
+});
